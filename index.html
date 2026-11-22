@@ -8,6 +8,32 @@
 body{background:var(--pagebg);color:var(--text);transition:background .25s ease,color .25s ease}.app{background:var(--appbg);transition:background .25s ease}.card,.stat,.row,.court,.field,.chip,.typePick button,.empty{background:var(--surface);color:var(--text)}.trackerMini{background:var(--surface2);color:var(--text)}.muted,.sub,.footerNote{color:var(--text2)}.nav{background:var(--nav)}
 body.dark{--surface:#0e1b2d;--surface2:#12243a;--text:#f5f9ff;--text2:#a9bad0;--appbg:#07111f;--pagebg:#030914;--input:#0e1b2d;--line:#223650;--nav:#020914}body.dark .secondary{background:#142b49;color:#6fdcff}body.dark .dots{background:#14243a;color:#eaf4ff}body.dark .chip.sel,body.dark .playerPick.sel{background:#102d51;color:#73dfff}body.dark .notice,body.dark .stageConfig{background:#0d2942;border-color:#185177;color:#d9efff}body.dark .guestTag{background:#172a40;color:#b9c9dc}body.dark .modal{background:var(--appbg)}body.dark .field{background:var(--input);color:var(--text)}body.dark .field::placeholder{color:#7f91a8}body.dark .score{color:#55d9ff}body.dark h1,body.dark h2,body.dark h3,body.dark .nm{color:var(--text)}body.dark .hero h1,body.dark .hero .ey{color:white}body.dark .reportTop h1{color:white}
 .themeToggle{position:absolute;top:18px;right:18px;z-index:5;display:flex;align-items:center;gap:6px}.themeIcon{font-size:13px;line-height:1;opacity:.85}.iosSwitch{width:52px;height:30px;border:0;border-radius:999px;padding:3px;background:#d8e0ea;box-shadow:inset 0 0 0 1px #b9c5d3;cursor:pointer;transition:.25s ease;position:relative}.iosSwitch::after{content:'';position:absolute;width:24px;height:24px;left:3px;top:3px;border-radius:50%;background:#fff;box-shadow:0 2px 6px #0003;transition:transform .25s cubic-bezier(.2,.8,.2,1)}body.dark .iosSwitch{background:linear-gradient(135deg,#0057ff,#00c3ff);box-shadow:none}body.dark .iosSwitch::after{transform:translateX(22px)}.hero{position:relative}
+
+/* Mobile viewport regression fix: preserve existing layout, avoid page-wide horizontal overflow. */
+html{width:100%;max-width:100%;overflow-x:clip;-webkit-text-size-adjust:100%}
+body{width:100%;max-width:100%;overflow-x:clip}
+.app{width:100%;max-width:560px;min-width:0;overflow-x:clip}
+.screen,.pad,.hero,.card,.court,.row,.head,.profileHero,.reportTop,.news,.stageConfig,.finalRule,.modal{min-width:0;max-width:100%}
+.pad{width:100%}
+.grid,.trackerCards,.typePick{grid-template-columns:repeat(2,minmax(0,1fr))}
+.team{grid-template-columns:minmax(0,1fr) 72px}
+.grow,.head>* ,.row>*,.team>*,.brand>*,.profileHero>*{min-width:0}
+.nm,.sub,.newsHeadline,.head,.notice,.finalRule{overflow-wrap:anywhere}
+img,svg,video,canvas{max-width:100%}
+.field,input,select,textarea{max-width:100%;min-width:0}
+.roundTabs{max-width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch}
+.modalWrap{width:100%;max-width:100%;padding:0;overflow-x:clip}
+.modal{width:100%;max-width:560px;max-height:calc(100dvh - 16px);padding-bottom:max(22px,env(safe-area-inset-bottom))}
+.nav{max-width:calc(100% - 20px);bottom:max(10px,env(safe-area-inset-bottom));grid-template-columns:repeat(5,minmax(0,1fr))}
+.nav button{min-width:0;overflow-wrap:anywhere}
+@media(max-width:390px){
+ .pad{padding:20px 14px}.hero{padding:26px 16px 22px}
+ .card,.court{padding:12px}.row{gap:7px;padding:9px}
+ .head{flex-wrap:wrap}.btn{max-width:100%;white-space:normal}
+ .team{grid-template-columns:minmax(0,1fr) 64px;gap:7px}.team input{width:64px;padding:9px 5px}
+ .nav{width:calc(100% - 16px);padding:6px}.nav button{font-size:9px;padding:5px 1px}
+ .nav .ico{font-size:17px}.nav .plus{width:46px;height:46px}
+}
 </style>
   <meta name="theme-color" content="#0057FF">
   <meta name="apple-mobile-web-app-capable" content="yes">
@@ -60,33 +86,52 @@ function togglePick(id){wiz.selected.includes(id)?wiz.selected=wiz.selected.filt
 function playoffValid(format,count){return count>=playoffMinimum(format)}
 function nextWiz(){if(wiz.step===1&&wiz.selected.length<4)return alert('Selecciona al menos 4 jugadores.');if(wiz.step===3&&!playoffValid(wiz.playoff,wiz.selected.length))return alert(`Este formato requiere ${playoffMinimum(wiz.playoff)} jugadores. Actualmente tienes ${wiz.selected.length}. Selecciona otro formato.`);wiz.step++;renderWizard()}
 function gcd(a,b){while(b){[a,b]=[b,a%b]}return a}
-function makeRounds(ids,courts){
+function makeRounds(ids,courts,history=[]){
   const n=ids.length,gamesPer=Math.min(courts,Math.floor(n/4)),slots=gamesPer*4;
-  if(gamesPer<1)return[];
-  // Minimal complete cycle: total player-slots must divide evenly across every player.
-  const roundCount=n/gcd(n,slots);
-  const pairCount={};
-  const rounds=[];
-  function pk(a,b){return [a,b].sort().join('|')}
-  function partnerScore(order){let score=0;for(let i=0;i<order.length;i+=4){score+=(pairCount[pk(order[i],order[i+1])]||0)*100;score+=(pairCount[pk(order[i+2],order[i+3])]||0)*100}return score}
+  if(gamesPer<1)return [];
+  const roundCount=n/gcd(n,slots), pairCount={},oppCount={};
+  const pk=(a,b)=>[a,b].sort().join('|');
+  const add=(obj,a,b)=>{let k=pk(a,b);obj[k]=(obj[k]||0)+1};
+  history.forEach(r=>r.matches.forEach(m=>{add(pairCount,...m.t1);add(pairCount,...m.t2);m.t1.forEach(a=>m.t2.forEach(b=>add(oppCount,a,b)))}));
+  // Seeded shuffle: reproducible on reload and avoids a permanently fixed roster order.
+  let seed=ids.join('').split('').reduce((h,c)=>(Math.imul(h,31)+c.charCodeAt(0))>>>0,2166136261) ^ (history.length*2654435761);
+  function rand(){seed=(Math.imul(seed,1664525)+1013904223)>>>0;return seed/4294967296}
+  function shuffle(a){a=a.slice();for(let i=a.length-1;i>0;i--){let j=Math.floor(rand()*(i+1));[a[i],a[j]]=[a[j],a[i]]}return a}
+  let roster=shuffle(ids),rounds=[];
+  // Circular playing slots: every player has the exact same number of appearances per full cycle.
   for(let r=0;r<roundCount;r++){
-    // Consecutive slots over a circular roster guarantee exactly equal appearances/rests at cycle end.
-    let playing=[];for(let j=0;j<slots;j++)playing.push(ids[(r*slots+j)%n]);
-    // Try deterministic rotations/reversals and keep the arrangement with least repeated partners.
-    let candidates=[];
-    for(let sh=0;sh<playing.length;sh++){let a=playing.slice(sh).concat(playing.slice(0,sh));candidates.push(a);candidates.push([a[0],...a.slice(1).reverse()])}
-    let order=candidates.sort((a,b)=>partnerScore(a)-partnerScore(b))[0];
+    let playing=[];for(let j=0;j<slots;j++)playing.push(roster[(r*slots+j)%n]);
+    let best=null,bestScore=Infinity;
+    for(let attempt=0;attempt<600;attempt++){
+      let order=shuffle(playing),score=0;
+      for(let i=0;i<order.length;i+=4){let [a,b,c,d]=order.slice(i,i+4);
+        score+=100*(pairCount[pk(a,b)]||0)**2+100*(pairCount[pk(c,d)]||0)**2;
+        for(let x of [a,b])for(let y of [c,d])score+=12*(oppCount[pk(x,y)]||0)**2;
+      }
+      if(score<bestScore){bestScore=score;best=order;if(score===0)break}
+    }
     let matches=[];
-    for(let i=0;i<order.length;i+=4){let a=order[i],b=order[i+1],c=order[i+2],d=order[i+3];matches.push({t1:[a,b],t2:[c,d],s1:null,s2:null});pairCount[pk(a,b)]=(pairCount[pk(a,b)]||0)+1;pairCount[pk(c,d)]=(pairCount[pk(c,d)]||0)+1}
+    for(let i=0;i<best.length;i+=4){let [a,b,c,d]=best.slice(i,i+4);matches.push({t1:[a,b],t2:[c,d],s1:null,s2:null});add(pairCount,a,b);add(pairCount,c,d);for(let x of [a,b])for(let y of [c,d])add(oppCount,x,y)}
     rounds.push({id:'r'+r,status:'pending',matches});
   }
-  return rounds
+  return rounds;
 }
 function startTournament(){if(!playoffValid(wiz.playoff,wiz.selected.length))return alert(`Este formato requiere ${playoffMinimum(wiz.playoff)} jugadores. Actualmente tienes ${wiz.selected.length}.`);db.active={id:'t_'+Date.now(),date:new Date().toLocaleDateString('es-VE',{day:'2-digit',month:'short',year:'numeric'}),players:wiz.selected.slice(),courts:wiz.courts,points:wiz.points,playoff:wiz.playoff,rounds:makeRounds(wiz.selected,wiz.courts),current:0};save();resume()}
 function resume(){show('live');renderLive()}function nameOf(id){return player(id)?.name||'Jugador'}
-function renderLive(){let t=db.active;if(!t)return show('home');let r=t.rounds[t.current];$('liveTitle').textContent=`Ronda ${t.current+1}`;$('roundTabs').innerHTML=t.rounds.map((x,i)=>`<button class="${i===t.current?'current':x.status==='done'?'done':'pending'}" onclick="t.current=${i};save();renderLive()">R${i+1}${x.status==='done'?' ✓':''}</button>`).join('');$('liveBody').innerHTML=r.matches.map((m,i)=>`<div class="court"><div class="ey">CANCHA ${i+1}</div><div class="team"><b>${m.t1.map(nameOf).join(' + ')}</b><input type="number" min="0" max="${t.points}" value="${m.s1??''}" onchange="setScore(${i},1,this.value)"></div><div class="team"><b>${m.t2.map(nameOf).join(' + ')}</b><input type="number" min="0" max="${t.points}" value="${m.s2??''}" onchange="setScore(${i},2,this.value)"></div></div>`).join('')+`<div class="grid"><button class="btn secondary" onclick="postpone()">Posponer ronda</button><button class="btn primary" onclick="completeRound()">Guardar ronda ✓</button></div><div style="margin-top:14px"><button class="btn secondary wide" onclick="confirmCancelPendingRounds()">Cancelar partidas pendientes / cerrar Americano</button></div><div style="margin-top:26px;padding-top:16px;border-top:1px solid var(--line,#d8e0ec);text-align:right"><button class="btn secondary" onclick="openActiveTournamentOptions()">⚙ Opciones del torneo</button></div>`}
+function renderLive(){
+ let t=db.active;if(!t)return show('home');if(t.playoffData)return renderPlayoff();
+ let r=t.rounds[t.current];if(!r)return closeRegular();
+ $('liveTitle').textContent=`Ronda ${t.current+1}${r.status==='postponed'?' · Pospuesta':''}`;
+ $('roundTabs').innerHTML=t.rounds.map((x,i)=>`<button type="button" aria-label="Abrir ronda ${i+1}" class="${i===t.current?'current':x.status==='done'?'done':'pending'}" onclick="openRound(${i})">R${i+1}${x.status==='done'?' ✓':x.status==='postponed'?' ↷':''}</button>`).join('');
+ $('liveBody').innerHTML=`<div class="notice">Puedes tocar cualquier R1, R2… para consultar, editar o jugar una ronda pospuesta.</div>`+
+ r.matches.map((m,i)=>`<div class="court"><div class="ey">CANCHA ${i+1}</div><div class="team"><b>${m.t1.map(nameOf).join(' + ')}</b><input type="number" min="0" max="${t.points}" value="${m.s1??''}" onchange="setScore(${i},1,this.value)"></div><div class="team"><b>${m.t2.map(nameOf).join(' + ')}</b><input type="number" min="0" max="${t.points}" value="${m.s2??''}" onchange="setScore(${i},2,this.value)"></div></div>`).join('')+
+ `<div class="grid"><button class="btn secondary" onclick="postpone()">Posponer ronda</button><button class="btn primary" onclick="completeRound()">${r.status==='done'?'Actualizar resultados ✓':'Guardar ronda ✓'}</button></div><div style="margin-top:14px"><button class="btn secondary wide" onclick="confirmCancelPendingRounds()">Cancelar partidas pendientes / cerrar Americano</button></div>`+
+ `<div class="card" style="margin-top:18px"><div class="head"><h2 style="margin:0">Posiciones en vivo</h2><span class="sub">Rondas completadas</span></div><div id="liveStandings">${standings(t).map((x,i)=>rankRow(x.name,i+1,x.pts,`${x.pj} partidos · ${x.w} victorias`)).join('')}</div></div>`+
+ `<div style="margin-top:26px;padding-top:16px;border-top:1px solid var(--line,#d8e0ec);text-align:right"><button class="btn secondary" onclick="openActiveTournamentOptions()">⚙ Opciones del torneo</button></div>`;
+}
+function openRound(index){let t=db.active;if(!t||t.playoffData||!t.rounds[index])return;t.current=index;save();renderLive()}
 function setScore(mi,k,v){let m=db.active.rounds[db.active.current].matches[mi],n=v.trim()===''?null:Number(v);if(n!==null&&(!Number.isInteger(n)||n<0||n>db.active.points)){alert('Introduce un puntaje entero entre 0 y '+db.active.points+'.');renderLive();return}m[k===1?'s1':'s2']=n;m[k===1?'s2':'s1']=n===null?null:db.active.points-n;save();renderLive()}
-function postpone(){let t=db.active;let next=t.rounds.findIndex((r,i)=>i!==t.current&&r.status!=='done');if(next<0)return alert('No hay otra ronda pendiente.');t.current=next;save();renderLive()}
+function postpone(){let t=db.active,r=t.rounds[t.current];if(r.status==='done')return alert('Esta ronda ya está completada. Puedes consultar o editar sus resultados.');r.status='postponed';let next=t.rounds.findIndex((x,i)=>i!==t.current&&x.status==='pending');if(next<0){save();renderLive();return alert('Ronda pospuesta. Puedes volver a ella tocando su botón R correspondiente.')}t.current=next;save();renderLive()}
 function completeRound(){let t=db.active,r=t.rounds[t.current];if(r.matches.some(m=>m.s1==null||m.s2==null||m.s1+m.s2!==t.points))return alert(`Cada partido debe sumar ${t.points} puntos.`);r.status='done';let next=t.rounds.findIndex(x=>x.status!=='done');save();if(next>=0){t.current=next;save();renderLive()}else closeRegular()}
 function standings(t=db.active){let map={};t.players.forEach(id=>map[id]={id,name:nameOf(id),pts:0,against:0,pj:0,w:0});t.rounds.filter(r=>r.status==='done').forEach(r=>r.matches.forEach(m=>{[[m.t1,m.s1,m.s2],[m.t2,m.s2,m.s1]].forEach(([team,pf,pc])=>team.forEach(id=>{map[id].pts+=pf;map[id].against+=pc;map[id].pj++;if(pf>pc)map[id].w++}))}));return Object.values(map).sort((a,b)=>b.pts-a.pts||(b.pts-b.against)-(a.pts-a.against)||b.w-a.w||a.name.localeCompare(b.name))}
 function closeRegular(){
@@ -115,7 +160,7 @@ function cancelPendingRounds(){
  if(!done.length||new Set(standings(t).map(x=>x.pj)).size!==1)return alert('No se puede cerrar el ciclo sin resultados equilibrados.');
  t.rounds=done;t.current=done.length-1;save();closeModal();closeRegular()
 }
-function addBalancedCycle(){let t=db.active,more=makeRounds(t.players,t.courts).map((r,i)=>({...r,id:'x'+Date.now()+'_'+i}));t.rounds.push(...more);t.current=t.rounds.length-more.length;save();renderLive()}
+function addBalancedCycle(){let t=db.active,more=makeRounds(t.players,t.courts,t.rounds).map((r,i)=>({...r,id:'x'+Date.now()+'_'+i}));t.rounds.push(...more);t.current=t.rounds.length-more.length;save();renderLive()}
 function changeActivePlayoff(){let t=db.active;if(!t||t.playoffData)return;openModal(`<h2>Cambiar formato</h2><p class="muted">El torneo tiene ${t.players.length} jugadores. Se conservarán las rondas y puntuaciones registradas.</p><button class="btn secondary wide" onclick="applyActivePlayoff('none')">Solo Americano</button>${t.players.length>=8?`<button class="btn secondary wide" style="margin-top:10px" onclick="applyActivePlayoff('semi')">Semis + Final</button>`:''}${t.players.length>=16?`<button class="btn secondary wide" style="margin-top:10px" onclick="applyActivePlayoff('quarter')">Cuartos + Semis + Final</button>`:''}<button class="btn secondary wide" style="margin-top:12px" onclick="closeModal()">Cancelar</button>`)}
 function applyActivePlayoff(format){let t=db.active;if(!t||t.playoffData||!playoffValid(format,t.players.length))return;t.playoff=format;save();closeModal();closeRegular()}
 function proceedPostSeason(){let t=db.active,s=standings();if(t.playoff==='none')return finalize([]);let need=t.playoff==='quarter'?16:8;if(s.length<need)return changeActivePlayoff();let q=s.slice(0,need).map(x=>x.id),pairs=[];for(let i=0;i<q.length;i+=2)pairs.push([q[i],q[i+1]]);let matches=[];for(let i=0;i<pairs.length;i+=2)matches.push({t1:pairs[i],t2:pairs[i+1],s1:null,s2:null});t.playoffData={stage:t.playoff==='quarter'?'Cuartos':'Semifinal',matches,points:t.points};save();renderPlayoff()}
